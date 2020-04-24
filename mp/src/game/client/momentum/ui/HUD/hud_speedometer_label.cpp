@@ -9,17 +9,19 @@
 using namespace vgui;
 
 SpeedometerLabel::SpeedometerLabel(Panel *parent, const char *panelName, ConVar *CvarLabelEnabled,
-                                   SpeedometerLabelUpdate_t updateType, float (*funcCalcVel)(C_MomentumPlayer *pPlayer),
+                                   SpeedometerLabelUpdate_t updateType, bool (*funcCalcVel)(C_MomentumPlayer *pPlayer, float *velocity, float *pPrevVelocityInContext),
                                    void (*funcColorize)(Color &currentColor, Color lastColor, 
                                                         float currentVel, float lastVel, 
                                                         Color normalColor, Color increaseColor, Color decreaseColor))
     : Label(parent, panelName, ""), m_cvarIsEnabled(CvarLabelEnabled), m_cvarMaxVel("sv_maxvelocity"), 
       m_cvarSpeedoUnits("mom_hud_speedometer_units"), m_cvarSpeedoColorize("mom_hud_speedometer_colorize"), m_eUpdateType(updateType),
-      CalcVelocity(funcCalcVel), ColorizeOverride(funcColorize)
+      GetVelocity(funcCalcVel), ColorizeOverride(funcColorize)
 {
     m_flLastVelocity = 0.0f;
     m_flCurrentVelocity = 0.0f;
     m_flNextColorizeCheck = 0.0f;
+    m_pPrevVelocityInContext = 0.0f;
+    m_bFadedOut = false;
     m_strAnimationName = nullptr;
     m_flAlpha = nullptr;
 }
@@ -74,18 +76,26 @@ void SpeedometerLabel::OnThink()
     if (!pPlayer)
         return;
 
-    if (m_eUpdateType != SPEEDOMETER_LABEL_UPDATE_ONLYFADE && CalcVelocity)
+    if (m_eUpdateType != SPEEDOMETER_LABEL_UPDATE_ONLYFADE && GetVelocity)
     {
-        m_flLastVelocity = m_flCurrentVelocity;
-        m_flCurrentVelocity = CalcVelocity(pPlayer);
-        bool bVelocityChanged = !CloseEnough(m_flCurrentVelocity, m_flLastVelocity);
-        if (m_eUpdateType == SPEEDOMETER_LABEL_UPDATE_ON_SAMEVEL ||
-            (m_eUpdateType == SPEEDOMETER_LABEL_UPDATE_ON_DIFFVELONLY && bVelocityChanged))
+        float velocity;
+        float *pVelocity = &velocity;
+        bool bShouldUpdate = GetVelocity(pPlayer, pVelocity, &m_pPrevVelocityInContext);
+        if (bShouldUpdate && pVelocity)
         {
-            if (bVelocityChanged)
-                SetLabelText();
-            if (m_cvarSpeedoColorize.GetInt() &&
-                (m_flNextColorizeCheck <= gpGlobals->curtime || m_eUpdateType == SPEEDOMETER_LABEL_UPDATE_ON_DIFFVELONLY))
+            if (m_bFadedOut) // reset values when faded out
+            {
+                m_flLastVelocity = 0.0f;
+                m_pPrevVelocityInContext = 0.0f;
+                m_bFadedOut = false;
+            }
+            else
+            {
+                m_flLastVelocity = m_flCurrentVelocity;
+            }
+            m_flCurrentVelocity = *pVelocity;
+            SetLabelText();
+            if (m_cvarSpeedoColorize.GetInt() && m_flNextColorizeCheck <= gpGlobals->curtime)
             {
                 if (ColorizeOverride) // custom colorize function
                 {
@@ -97,11 +107,13 @@ void SpeedometerLabel::OnThink()
                     Colorize();
                 }
                 SetFgColor(m_CurrentColor);
-                StartFade();
                 m_LastColor = m_CurrentColor;
                 m_flNextColorizeCheck = gpGlobals->curtime + MOM_COLORIZATION_CHECK_FREQUENCY;
             }
+            StartFade();
         }
+        float currentAlpha;
+        m_bFadedOut = GetAlpha(&currentAlpha) && CloseEnough(currentAlpha, 0.0f);
     }
     // always apply fade if there is one
     ApplyFade();
@@ -112,7 +124,8 @@ void SpeedometerLabel::Reset()
     m_flLastVelocity = 0.0f;
     m_flCurrentVelocity = 0.0f;
     m_flNextColorizeCheck = 0.0f;
-    SetText("");
+    m_pPrevVelocityInContext = 0.0f;
+    SetAlpha(0.0f); // if label has a fadeout, this sets the alpha to 0
 }
 
 bool SpeedometerLabel::StartFade()
@@ -121,16 +134,6 @@ bool SpeedometerLabel::StartFade()
     {
         *m_flAlpha = 255.0f;
         return g_pClientMode->GetViewportAnimationController()->StartAnimationSequence(m_strAnimationName);
-    }
-    return false;
-}
-
-bool SpeedometerLabel::StopFade()
-{
-    if (m_strAnimationName)
-    {
-        *m_flAlpha = 255.0f;
-        return g_pClientMode->GetViewportAnimationController()->StopAnimationSequence(GetParent(), m_strAnimationName);
     }
     return false;
 }
@@ -144,6 +147,26 @@ void SpeedometerLabel::ApplyFade()
         m_CurrentColor = Color(m_CurrentColor.r(), m_CurrentColor.g(), m_CurrentColor.b(), RoundFloatToInt(*m_flAlpha));
         SetFgColor(m_CurrentColor);
     }
+}
+
+bool SpeedometerLabel::GetAlpha(float *alpha)
+{
+    if (m_flAlpha)
+    {
+        *alpha = *m_flAlpha;
+        return true;
+    }
+    return false;
+}
+
+bool SpeedometerLabel::SetAlpha(float alpha)
+{
+    if (m_flAlpha)
+    {
+        *m_flAlpha = alpha;
+        return true;
+    }
+    return false;
 }
 
 void SpeedometerLabel::Colorize()

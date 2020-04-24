@@ -36,15 +36,15 @@ class CHudSpeedMeter : public CHudElement, public vgui::EditablePanel
 
     void SetComparison(C_MomentumPlayer *pLocal);
 
-    static float GetAbsVelocity(C_MomentumPlayer *pPlayer);
-    static float GetHorizVelocity(C_MomentumPlayer *pPlayer);
-    static float GetLastJumpVelocity(C_MomentumPlayer *pPlayer);
+    static bool GetAbsVelocity(C_MomentumPlayer *pPlayer, float *pVelocity, float *pPrevVelocityInContext);
+    static bool GetHorizVelocity(C_MomentumPlayer *pPlayer, float *pVelocity, float *pPrevVelocityInContext);
+    static bool GetLastJumpVelocity(C_MomentumPlayer *pPlayer, float *pVelocity, float *pPrevVelocityInContext);
     static void LastJumpVelColorizeOverride(Color &currentColor, Color lastColor, float currentVel, float lastVel,
                                             Color normalColor, Color increaseColor, Color decreaseColor);
 
     // helper functions
-    static void AdjustToReplayTimeScale(float &vel);
-    static void AdjustToUnits(float &vel, C_MomentumPlayer *pPlayer);
+    static void AdjustToReplayTimeScale(float *vel);
+    static void AdjustToUnits(float *vel, C_MomentumPlayer *pPlayer);
 
   protected:
     // NOTE: These need to be floats because of animations (thanks volvo)

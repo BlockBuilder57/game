@@ -60,6 +60,7 @@ CHudSpeedMeter::CHudSpeedMeter(const char *pElementName)
     : CHudElement(pElementName), EditablePanel(g_pClientMode->GetViewport(), "HudSpeedMeter")
 {
     ListenForGameEvent("zone_exit");
+    ListenForGameEvent("zone_enter");
     SetProportional(true);
     SetKeyBoardInputEnabled(false);
     SetMouseInputEnabled(false);
@@ -67,10 +68,10 @@ CHudSpeedMeter::CHudSpeedMeter(const char *pElementName)
 
     m_pUnitsLabel = new Label(this, "UnitsLabel", "");
 
-    m_pAbsSpeedoLabel = new SpeedometerLabel(this, "AbsSpeedoLabel", &mom_hud_speedometer, SPEEDOMETER_LABEL_UPDATE_ON_SAMEVEL, GetAbsVelocity);
-    m_pHorizSpeedoLabel = new SpeedometerLabel(this, "HorizSpeedoLabel", &mom_hud_speedometer_horiz, SPEEDOMETER_LABEL_UPDATE_ON_SAMEVEL, GetHorizVelocity);
+    m_pAbsSpeedoLabel = new SpeedometerLabel(this, "AbsSpeedoLabel", &mom_hud_speedometer, SPEEDOMETER_LABEL_UPDATE_ALWAYS, GetAbsVelocity);
+    m_pHorizSpeedoLabel = new SpeedometerLabel(this, "HorizSpeedoLabel", &mom_hud_speedometer_horiz, SPEEDOMETER_LABEL_UPDATE_ALWAYS, GetHorizVelocity);
 
-    m_pLastJumpVelLabel = new SpeedometerLabel(this, "LastJumpVelLabel", &mom_hud_speedometer_lastjumpvel, SPEEDOMETER_LABEL_UPDATE_ON_DIFFVELONLY,
+    m_pLastJumpVelLabel = new SpeedometerLabel(this, "LastJumpVelLabel", &mom_hud_speedometer_lastjumpvel, SPEEDOMETER_LABEL_UPDATE_ALWAYS,
                                                GetLastJumpVelocity, LastJumpVelColorizeOverride);
     m_pLastJumpVelLabel->SetFadeOutAnimation("FadeOutJumpSpeed", &m_flLastJumpVelAlpha);
 
@@ -108,9 +109,16 @@ void CHudSpeedMeter::FireGameEvent(IGameEvent *pEvent)
         const auto ent = pEvent->GetInt("ent");
         if (ent == pLocal->GetCurrentUIEntity()->GetEntIndex())
         {
+            const auto pRunEntData = pLocal->GetCurrentUIEntData();
             if (FStrEq(pEvent->GetName(), "zone_exit"))
             {
                 SetComparison(pLocal);
+            }
+            else if (FStrEq(pEvent->GetName(), "zone_enter") && pRunEntData->m_bIsInZone && pRunEntData->m_iCurrentZone == 1)
+            {
+                m_pStageExitLabel->SetAlpha(0.0f);
+                m_pStageExitComparisonLabel->SetAlpha(0.0f);
+                m_pLastJumpVelLabel->SetAlpha(0.0f);
             }
         }
     }
@@ -211,32 +219,32 @@ void CHudSpeedMeter::OnThink()
     }
 }
 
-void CHudSpeedMeter::AdjustToReplayTimeScale(float &vel)
+void CHudSpeedMeter::AdjustToReplayTimeScale(float *vel)
 {
     static ConVarRef CvarTimeScale("mom_replay_timescale");
     float timescale = CvarTimeScale.GetFloat();
     if (timescale < 1.0f)
     {
-        vel /= timescale;
+        *vel /= timescale;
     }
 }
 
-void CHudSpeedMeter::AdjustToUnits(float &vel, C_MomentumPlayer *pPlayer)
+void CHudSpeedMeter::AdjustToUnits(float *vel, C_MomentumPlayer *pPlayer)
 {
     // Conversions based on https://developer.valvesoftware.com/wiki/Dimensions#Map_Grid_Units:_quick_reference
     switch (mom_hud_speedometer_units.GetInt())
     {
     case SPEEDOMETER_UNITS_KMH:
-        vel *= UPS_TO_KMH_FACTOR;
+        *vel *= UPS_TO_KMH_FACTOR;
         break;
     case SPEEDOMETER_UNITS_MPH:
-        vel *= UPS_TO_MPH_FACTOR;
+        *vel *= UPS_TO_MPH_FACTOR;
         break;
     case SPEEDOMETER_UNITS_ENERGY:
     {
         // Normalized units of energy
         const auto gravity = sv_gravity.GetFloat();
-        vel = (Square(vel) / 2.0f + gravity * (pPlayer->GetLocalOrigin().z - pPlayer->GetCurrentUIEntData()->m_flLastJumpZPos)) / gravity;
+        *vel = (Square(*vel) / 2.0f + gravity * (pPlayer->GetLocalOrigin().z - pPlayer->GetCurrentUIEntData()->m_flLastJumpZPos)) / gravity;
         break;
     }
     case SPEEDOMETER_UNITS_UPS:
@@ -245,43 +253,51 @@ void CHudSpeedMeter::AdjustToUnits(float &vel, C_MomentumPlayer *pPlayer)
     }
 }
 
-float CHudSpeedMeter::GetAbsVelocity(C_MomentumPlayer *pPlayer)
+bool CHudSpeedMeter::GetAbsVelocity(C_MomentumPlayer *pPlayer, float *pVelocity, float *pPrevVelocityInContext)
 {
     Vector vecVelocity = pPlayer->GetAbsVelocity();
-    float flVelocity = static_cast<float>(vecVelocity.Length());
+    *pVelocity = static_cast<float>(vecVelocity.Length());
     if (pPlayer->IsObserver() && pPlayer->GetCurrentUIEntity()->GetEntType() == RUN_ENT_REPLAY)
     {
-        AdjustToReplayTimeScale(flVelocity);
+        AdjustToReplayTimeScale(pVelocity);
     }
-    AdjustToUnits(flVelocity, pPlayer);
-    return flVelocity;
+    AdjustToUnits(pVelocity, pPlayer);
+    return true;
 }
 
-float CHudSpeedMeter::GetHorizVelocity(C_MomentumPlayer *pPlayer)
+bool CHudSpeedMeter::GetHorizVelocity(C_MomentumPlayer *pPlayer, float *pVelocity, float *pPrevVelocityInContext)
 {
     Vector vecVelocity = pPlayer->GetAbsVelocity();
     vecVelocity.z = 0;
-    float flVelocity = static_cast<float>(vecVelocity.Length());
+    *pVelocity = static_cast<float>(vecVelocity.Length());
     if (pPlayer->IsObserver() && pPlayer->GetCurrentUIEntity()->GetEntType() == RUN_ENT_REPLAY)
     {
-        AdjustToReplayTimeScale(flVelocity);
+        AdjustToReplayTimeScale(pVelocity);
     }
-    AdjustToUnits(flVelocity, pPlayer);
-    return flVelocity;
+    AdjustToUnits(pVelocity, pPlayer);
+    return true;
 }
 
-float CHudSpeedMeter::GetLastJumpVelocity(C_MomentumPlayer* pPlayer)
+bool CHudSpeedMeter::GetLastJumpVelocity(C_MomentumPlayer *pPlayer, float *pVelocity, float *pPrevVelocityInContext)
 {
     const auto pRunEntData = pPlayer->GetRunEntData();
     float lastJumpVel = pRunEntData->m_flLastJumpVel;
-    AdjustToUnits(lastJumpVel, pPlayer);
-    return lastJumpVel;
+    float lastJumpTime = pRunEntData->m_flLastJumpTime;
+
+    bool shouldUpdate = *pPrevVelocityInContext != lastJumpTime; // new jump since last called
+    if (shouldUpdate)
+    {
+        *pVelocity = lastJumpVel;
+        *pPrevVelocityInContext = lastJumpTime;
+        AdjustToUnits(pVelocity, pPlayer);
+    }
+    return shouldUpdate;
 }
 
 void CHudSpeedMeter::LastJumpVelColorizeOverride(Color &currentColor, Color lastColor, float currentVel, float lastVel,
                                                  Color normalColor, Color increaseColor, Color decreaseColor)
 {
-    if (CloseEnough(currentVel, 0.0f))
+    if (CloseEnough(currentVel, lastVel))
     {
         currentColor = normalColor;
     }
